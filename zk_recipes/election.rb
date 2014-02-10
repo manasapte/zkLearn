@@ -44,16 +44,16 @@ module ZkRecipes
       end
 
       def i_the_leader?
-        @candidates[0] == @path
+        @candidates[0] == File.basename(@path)
       end
 
       def parent_path
-        idx = @candidates.index(@path) 
+        idx = @candidates.index(File.basename(@path))
         idx == 0 ? nil : @candidates[idx - 1]
       end
 
       def leader_ready 
-        @zk.set(@leader_path, :data => @data)
+        @zk.set(@leader_path, @data)
       end
 
       def handle_parent_event(event)
@@ -102,10 +102,11 @@ module ZkRecipes
         create_if_not_exists(get_absolute_path([@namespace]))
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
-        p "path is: "
+        p "path is: #{@path}"
         watch_leader
         vote!
         @heartbeat.join
+        p "done join"
       end
 
       def stop
