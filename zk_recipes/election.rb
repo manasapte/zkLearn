@@ -17,7 +17,7 @@ module ZkRecipes
         File.join([""] + crumbs)
       end
 
-      def election_nodes
+      def current_candidates
         @zk.children(get_path([@zk, @election_ns])).grep(/^_election_/).sort
       end
 
@@ -28,15 +28,18 @@ module ZkRecipes
       end
 
       def i_the_leader?
-        election_nodes[0] == @path
+        @candidates[0] == @path
       end
 
       def parent_path
-        nodes = election_nodes
-        nodes.index[@path] == 0 ? nil : nodes[nodes.index(@path) - 1]
+        idx = @candidates.index(@path) 
+        idx == 0 ? nil : @candidates[idx - 1]
       end
 
       def handle_parent_event(event)
+        if event.node_deleted?
+          vote!
+        end
       end
 
       def watch_parent
@@ -56,13 +59,15 @@ module ZkRecipes
       end
 
       def start
+        return if @started
         @started = true
         @heartbeat.start
+        @path = @zk.create(:mode => :ephemeral_sequential)
         vote!
       end
 
       def vote! 
-        @path = @zk.create(:mode => :ephemeral_sequential)
+        @candidates = current_candidates 
         if i_the_leader?
           handler.election_won!
         else
