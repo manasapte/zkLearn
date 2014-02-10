@@ -1,8 +1,9 @@
 module ZkRecipes
   class Heartbeat
     def initialize(zk, namespace, period)
-      @namespace = namespace.gsub!('/^\//', '')
-      unless @zk.stat(@namespace).exists
+      @zk = zk
+      @namespace = File.join(["", namespace.gsub('/^\//', '')])
+      unless @zk.exists?(@namespace)
         @zk.create(@namespace)
       end
       @period = period

@@ -1,6 +1,6 @@
 module ZkRecipes
   module Election
-    require 'heartbeat'
+    require_relative 'heartbeat'
     HEARTBEAT_PERIOD = 2
     class ElectionCandidate
       def initialize(zk, app_name, data, election_ns, handler)
@@ -8,7 +8,7 @@ module ZkRecipes
         @namespace   = app_name
         @election_ns = election_ns
         @handler     = handler
-        @prefix      = get_abs_path([@namespace, @election_ns]))
+        @prefix      = get_absolute_path([@namespace, @election_ns])
         @heartbeat   = ZkRecipes::Heartbeat.new(@zk, @namespace, HEARTBEAT_PERIOD)
         @started     = false
       end
@@ -19,6 +19,12 @@ module ZkRecipes
 
       def get_relative_path(prefix, suffix)
         File.join([prefix, suffix])
+      end
+
+      def create_if_not_exists(path)
+        unless @zk.exists?(path)
+          @zk.create(path)
+        end
       end
 
       def current_candidates
@@ -93,9 +99,18 @@ module ZkRecipes
         return if @started
         @started = true
         @heartbeat.start
+        create_if_not_exists(get_absolute_path([@namespace]))
+        create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
+        p "path is: "
         watch_leader
         vote!
+        @heartbeat.join
+      end
+
+      def stop
+        return unless @started
+        @heartbeat.stop
       end
 
       def vote! 
@@ -108,7 +123,6 @@ module ZkRecipes
           @handler.election_lost!
           watch_parent
           watch_leader
-          @heartbeat.join
         end
       end
     end
