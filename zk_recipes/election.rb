@@ -41,6 +41,9 @@ module ZkRecipes
       end
 
       def leader_ready 
+        get_relative_path(@prefix, "current_leader")
+        unless @zk.exist?(get_relative_path(@prefix, "current_leader"))
+        end
       end
 
       def handle_parent_event(event)
