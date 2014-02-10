@@ -21,9 +21,9 @@ module ZkRecipes
         @zk.children(get_path([@zk, @election_ns])).grep(/^_election_/).sort
       end
 
-      def clear_parent_watch
-        if @parent_watch
-          @parent_watch.unregister
+      def clear_parent_subscription
+        if @parent_subscription
+          @parent_subscription.unregister
         end
       end
 
@@ -31,36 +31,40 @@ module ZkRecipes
         election_nodes[0] == @path
       end
 
-      def get_parent_path!
-        return unless @started
+      def parent_path
         nodes = election_nodes
-        idx   = nodes.index[@path] 
-        return if idx == 0
-        @parent_path = nodes[idx - 1]
+        nodes.index[@path] == 0 ? nil : nodes[nodes.index(@path) - 1]
+      end
+
+      def handle_parent_event(event)
       end
 
       def watch_parent
-        clear_parent_watch
-        @zk.register(parent_path) do |event|
-          if event.node_deleted?
-            if i_the_leader?
-              handler.election_won!
-            else
-              watch_parent
+        clear_parent_subscription
+        loop do
+          p_path = parent_path
+          break if p_path.nil?
+          @parent_subscription = @zk.register(p_path) do |event|
+            handle_parent_event(event)
+          end
+          if !@zk.exists?(p_path, :watch => true) 
+            clear_parent_suscription
+          else
+            break
+          end
+        end
+      end
 
       def start
         @started = true
         @path = @zk.create(:mode => :ephemeral_sequential)
-        if i_the_leader?
-          handler.election_won!
-        else
-          p_path = parent_path
-          @parent_watch = @zk.register do |event|
-            if event.node_deleted?
-              am_i_the_new_leader
-            end
+        loop do
+          if i_the_leader?
+            handler.election_won!
+          else
+            watch_parent
+            @heartbeat.start
           end
-          @heartbeat.start
         end
       end
 
