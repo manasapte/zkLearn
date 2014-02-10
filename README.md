@@ -1,4 +1,4 @@
 zkLearn
 =======
 
-playground for zookeeper
+zookeeper recipes
