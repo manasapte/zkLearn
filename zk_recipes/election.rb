@@ -57,15 +57,19 @@ module ZkRecipes
 
       def start
         @started = true
-        @path = @zk.create(:mode => :ephemeral_sequential)
-        loop do
-          if i_the_leader?
-            handler.election_won!
-          else
-            watch_parent
-            @heartbeat.start
-          end
-        end
+        @heartbeat.start
+        vote!
       end
 
-
+      def vote! 
+        @path = @zk.create(:mode => :ephemeral_sequential)
+        if i_the_leader?
+          handler.election_won!
+        else
+          handler.election_lost!
+          watch_parent
+        end
+      end
+    end
+  end
+end
