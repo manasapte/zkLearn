@@ -79,6 +79,7 @@ module ZkRecipes
         clear_leader_subscription
         @leader_subscription = @zk.register(@leader_path) do |event|
           handle_leader_event(event)
+          watch_leader
         end
         @zk.stat(@leader_path, :watch => true)
       end
