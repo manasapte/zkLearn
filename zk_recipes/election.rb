@@ -4,13 +4,15 @@ module ZkRecipes
     HEARTBEAT_PERIOD = 2
     class ElectionCandidate
       def initialize(zk, app_name, data, election_ns, handler)
-        @zk          = zk
-        @namespace   = app_name
-        @election_ns = election_ns
-        @handler     = handler
-        @prefix      = get_absolute_path([@namespace, @election_ns])
-        @heartbeat   = ZkRecipes::Heartbeat.new(@zk, HEARTBEAT_PERIOD)
-        @started     = false
+        @zk                 = zk
+        @namespace          = app_name
+        @election_ns        = election_ns
+        @handler            = handler
+        @data               = data
+        @prefix             = get_absolute_path([@namespace, @election_ns])
+        @heartbeat          = ZkRecipes::Heartbeat.new(@zk, HEARTBEAT_PERIOD)
+        @started            = false
+        @leader_ready_mutex = Mutex.new 
       end
 
       def get_absolute_path(crumbs)
@@ -64,7 +66,12 @@ module ZkRecipes
 
       def handle_leader_event(event)
         if event.node_created?
-          @handler.leader_ready!(@zk.get(event.path))
+          begin
+            data = @zk.get(event.path)[0]
+          rescue ZK::Exceptions::NoNode => e
+          end
+          call_leader_ready(data) if data
+          @zk.stat(@leader_path, :watch => true)
         end
       end
 
@@ -76,18 +83,42 @@ module ZkRecipes
         @zk.stat(@leader_path, :watch => true)
       end
 
-      def watch_parent
+      def watch_parent(p_path)
+        @parent_subscription = @zk.register(p_path) do |event|
+          handle_parent_event(event)
+        end
+        if !@zk.stat(p_path, :watch => true).exists
+          clear_parent_suscription
+          false
+        else
+          true
+        end
+      end
+
+      def wait_for_next_election 
         clear_parent_subscription
         loop do
           p_path = parent_path
-          break if p_path.nil?
-          @parent_subscription = @zk.register(p_path) do |event|
-            handle_parent_event(event)
-          end
-          if !@zk.exists?(p_path, :watch => true) 
-            clear_parent_suscription
-          else
+          if p_path.nil?
+            election_won
             break
+          end
+          break if watch_parent(p_path)
+        end
+      end
+
+      def call_leader_ready(data)
+        @leader_ready_mutex.synchronize do
+          @handler.leader_ready!(data[0])
+        end
+      end
+
+      def find_current_leader
+        if @zk.stat(@leader_path).exists
+          begin
+            data = @zk.get(@leader_path)
+            call_leader_ready(data[0])
+          rescue ZK::Exceptions::NoNode => e
           end
         end
       end
@@ -100,10 +131,9 @@ module ZkRecipes
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @leader_path = get_relative_path(@prefix, "current_leader")
         @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
-        p "path is: #{@path}"
+        watch_leader
         vote!
         @heartbeat.join
-        p "done join"
       end
 
       def stop
@@ -111,15 +141,24 @@ module ZkRecipes
         @heartbeat.stop
       end
 
+      def election_won
+        clear_leader_subscription
+        @handler.election_won!
+        leader_ready
+      end
+
+      def election_lost
+        @handler.election_lost!
+        wait_for_next_election 
+        find_current_leader
+      end
+
       def vote! 
         @candidates = current_candidates 
         if i_the_leader?
-          @handler.election_won!
-          leader_ready
+          election_won
         else
-          @handler.election_lost!
-          watch_parent
-          watch_leader
+          election_lost
         end
       end
     end
