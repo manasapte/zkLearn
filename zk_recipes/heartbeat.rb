@@ -1,11 +1,7 @@
 module ZkRecipes
   class Heartbeat
-    def initialize(zk, namespace, period)
+    def initialize(zk, period)
       @zk = zk
-      @namespace = File.join(["", namespace.gsub('/^\//', '')])
-      unless @zk.exists?(@namespace)
-        @zk.create(@namespace)
-      end
       @period = period
     end
 
@@ -24,10 +20,16 @@ module ZkRecipes
     private
 
     def heartbeat
-      @zk.stat(@namespace, :watch => false)
-    rescue =>e
-    else
-      sleep @period
+      loop do
+        begin
+          @zk.stat("/", :watch => false)
+        rescue =>e
+          p "caught exception #{e.inspect}"
+          exit 2
+        else
+          sleep @period
+        end
+      end
     end
   end
 end

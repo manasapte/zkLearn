@@ -9,7 +9,7 @@ module ZkRecipes
         @election_ns = election_ns
         @handler     = handler
         @prefix      = get_absolute_path([@namespace, @election_ns])
-        @heartbeat   = ZkRecipes::Heartbeat.new(@zk, @namespace, HEARTBEAT_PERIOD)
+        @heartbeat   = ZkRecipes::Heartbeat.new(@zk, HEARTBEAT_PERIOD)
         @started     = false
       end
 
@@ -49,7 +49,7 @@ module ZkRecipes
 
       def parent_path
         idx = @candidates.index(File.basename(@path))
-        idx == 0 ? nil : @candidates[idx - 1]
+        idx == 0 ? nil : get_relative_path(@prefix, @candidates[idx - 1])
       end
 
       def leader_ready 
@@ -63,6 +63,7 @@ module ZkRecipes
       end
 
       def handle_leader_event(event)
+        p "in leader event handler"
         if event.node_changed?
           @handler.leader_ready!
         end
