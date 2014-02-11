@@ -60,7 +60,7 @@ module ZkRecipes
 
       def handle_parent_event(event)
         if event.node_deleted?
-          vote!
+          check_results
         end
       end
 
@@ -109,7 +109,7 @@ module ZkRecipes
 
       def call_leader_ready(data)
         @leader_ready_mutex.synchronize do
-          @handler.leader_ready!(data[0])
+          @handler.leader_ready!(data)
         end
       end
 
@@ -130,10 +130,16 @@ module ZkRecipes
         create_if_not_exists(get_absolute_path([@namespace]))
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @leader_path = get_relative_path(@prefix, "current_leader")
-        @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
         watch_leader
         vote!
+        unless check_results
+          find_current_leader
+        end
         @heartbeat.join
+      end
+
+      def vote!
+        @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
       end
 
       def stop
@@ -150,15 +156,16 @@ module ZkRecipes
       def election_lost
         @handler.election_lost!
         wait_for_next_election 
-        find_current_leader
       end
 
-      def vote! 
+      def check_results
         @candidates = current_candidates 
         if i_the_leader?
           election_won
+          true
         else
           election_lost
+          false
         end
       end
     end
