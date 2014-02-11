@@ -6,8 +6,8 @@ class LeaderElection
     @candidate.start
   end
 
-  def leader_ready!
-    p "leader ready"
+  def leader_ready!(data)
+    p "leader ready with data: #{data}"
   end
 
   def election_won!

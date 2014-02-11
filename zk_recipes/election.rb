@@ -63,8 +63,8 @@ module ZkRecipes
       end
 
       def handle_leader_event(event)
-        if event.node_changed?
-          @handler.leader_ready!
+        if event.node_created?
+          @handler.leader_ready!(@zk.get(event.path))
         end
       end
 
