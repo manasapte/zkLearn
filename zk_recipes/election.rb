@@ -53,7 +53,7 @@ module ZkRecipes
       end
 
       def leader_ready 
-        @zk.set(@leader_path, @data)
+        @zk.create(@leader_path, :data => @data, :mode => :ephemeral)
       end
 
       def handle_parent_event(event)
@@ -63,21 +63,17 @@ module ZkRecipes
       end
 
       def handle_leader_event(event)
-        p "in leader event handler"
         if event.node_changed?
           @handler.leader_ready!
         end
       end
 
       def watch_leader
-        @leader_path = get_relative_path(@prefix, "current_leader")
+        clear_leader_subscription
         @leader_subscription = @zk.register(@leader_path) do |event|
           handle_leader_event(event)
         end
-        if !@zk.exists?(@leader_path, :watch => true)
-          @zk.create(@leader_path, :data => "")
-          @zk.stat(@leader_path, :watch => true)
-        end
+        @zk.stat(@leader_path, :watch => true)
       end
 
       def watch_parent
@@ -102,9 +98,9 @@ module ZkRecipes
         @heartbeat.start
         create_if_not_exists(get_absolute_path([@namespace]))
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
+        @leader_path = get_relative_path(@prefix, "current_leader")
         @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
         p "path is: #{@path}"
-        watch_leader
         vote!
         @heartbeat.join
         p "done join"
@@ -118,7 +114,6 @@ module ZkRecipes
       def vote! 
         @candidates = current_candidates 
         if i_the_leader?
-          clear_leader_subscription
           @handler.election_won!
           leader_ready
         else
