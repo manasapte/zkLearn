@@ -12,7 +12,7 @@ module ZkRecipes
         @prefix             = get_absolute_path([@namespace, @election_ns])
         @heartbeat          = ZkRecipes::Heartbeat.new(@zk, HEARTBEAT_PERIOD)
         @started            = false
-        @leader_ready_mutex = Mutex.new 
+        @app_event_mutex    = Mutex.new 
       end
 
       def get_absolute_path(crumbs)
@@ -109,7 +109,7 @@ module ZkRecipes
       end
 
       def call_leader_ready(data)
-        @leader_ready_mutex.synchronize do
+        @app_event_mutex.synchronize do
           @handler.leader_ready!(data)
         end
       end
@@ -149,14 +149,18 @@ module ZkRecipes
       end
 
       def election_won
-        clear_leader_subscription
-        @handler.election_won!
-        leader_ready
+        @app_event_mutex.synchronize do
+          clear_leader_subscription
+          @handler.election_won!
+          leader_ready
+        end
       end
 
       def election_lost
-        @handler.election_lost!
-        wait_for_next_election 
+        @app_event_mutex.synchronize do
+          @handler.election_lost!
+          wait_for_next_election 
+        end
       end
 
       def check_results
