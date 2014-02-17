@@ -100,7 +100,6 @@ module ZkRecipes
           clear_parent_suscription
           false
         else
-          p "watch succeeded for path: #{parent_path}"
           true
         end
       end
@@ -108,7 +107,6 @@ module ZkRecipes
       def wait_for_next_round
         clear_parent_subscription
         @candidates[0, my_index].reverse.each do |path|
-          p "ppath is: #{get_relative_path(@prefix, path)}"
           return if attempt_watch_parent(get_relative_path(@prefix, path))
         end
         @all_parents_dead = true
