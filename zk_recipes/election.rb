@@ -1,7 +1,5 @@
 module ZkRecipes
   module Election
-    require_relative 'heartbeat'
-    HEARTBEAT_PERIOD = 2
     class ElectionCandidate
       def initialize(zk, app_name, data, election_ns, handler)
         @zk                 = zk
@@ -10,7 +8,6 @@ module ZkRecipes
         @handler            = handler
         @data               = data
         @prefix             = get_absolute_path([@namespace, @election_ns])
-        @heartbeat          = ZkRecipes::Heartbeat.new(@zk, HEARTBEAT_PERIOD)
         @started            = false
         @app_event_mutex    = Mutex.new 
       end
@@ -136,7 +133,6 @@ module ZkRecipes
         return if @started
         @started = true
         @waiting_for_next_round = false
-        @heartbeat.start
         create_if_not_exists(get_absolute_path([@namespace]))
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @leader_path = get_relative_path(@prefix, "current_leader")
@@ -147,7 +143,6 @@ module ZkRecipes
         unless i_the_leader? 
           find_current_leader
         end
-        @heartbeat.join
       end
 
       def become_a_candidate
@@ -156,7 +151,6 @@ module ZkRecipes
 
       def stop
         return unless @started
-        @heartbeat.stop
       end
 
       def election_won
