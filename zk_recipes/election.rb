@@ -39,14 +39,33 @@ module ZkRecipes
         end
       end
 
+      def set_parent_subscription
+        clear_parent_subscription
+        @parent_subscription = @zk.register(parent_path) do |event|
+          handle_parent_event(event)
+        end
+      end
+
+      def set_leader_subscription
+        clear_leader_subscription
+        @leader_subscription = @zk.register(@leader_path) do |event|
+          handle_leader_event(event)
+          watch_leader
+        end
+      end
+
       def clear_leader_subscription
         if @leader_subscription
           @leader_subscription.unregister
         end
       end
 
+      def my_index
+        @myIdx ||= @candidates.index(File.basename(@path))
+      end
+
       def i_the_leader?
-        @candidates[0] == File.basename(@path)
+        my_index == 0 || !waiting_for_next_round
       end
 
       def parent_path
@@ -60,87 +79,78 @@ module ZkRecipes
 
       def handle_parent_event(event)
         if event.node_deleted?
+          @waiting_for_next_round = false
           check_results
         end
       end
 
       def handle_leader_event(event)
         if event.node_created?
-          begin
-            data = @zk.get(event.path)[0]
-          rescue ZK::Exceptions::NoNode => e
-          end
-          call_leader_ready(data) if data
+          data = @zk.get(event.path)[0]
+          leader_ready(data) if @waiting_for_next_round
           @zk.stat(@leader_path, :watch => true)
         end
+      rescue ZK::Exceptions::NoNode => e
       end
 
       def watch_leader
-        clear_leader_subscription
-        @leader_subscription = @zk.register(@leader_path) do |event|
-          handle_leader_event(event)
-          watch_leader
-        end
         @zk.stat(@leader_path, :watch => true)
       end
 
-      def watch_parent(p_path)
-        @parent_subscription = @zk.register(p_path) do |event|
-          handle_parent_event(event)
-        end
-        if !@zk.stat(p_path, :watch => true).exists
+      def attempt_watch_parent(parent_path)
+        success = false
+        set_parent_subscription
+        if !@zk.exists?(parent_path, :watch => true)
           clear_parent_suscription
           false
         else
+          @waiting_for_next_round = true
           true
         end
       end
 
-      def wait_for_next_election 
+      def wait_for_next_round
         clear_parent_subscription
-        loop do
-          p_path = parent_path
-          if p_path.nil?
-            election_won
-            break
-          end
-          break if watch_parent(p_path)
+        @candidates[0, my_index].reverse.each do |parent_path|
+          return if attempt_watch_parent(parent_path)
         end
+        election_won
       end
 
-      def call_leader_ready(data)
+      def leader_ready(data)
         @app_event_mutex.synchronize do
           @handler.leader_ready!(data)
         end
       end
 
       def find_current_leader
-        if @zk.stat(@leader_path).exists
-          begin
-            data = @zk.get(@leader_path)
-            call_leader_ready(data[0])
-          rescue ZK::Exceptions::NoNode => e
-          end
+        if @zk.exists?(@leader_path)
+          data = @zk.get(@leader_path)
+          leader_ready(data[0])
         end
+      rescue ZK::Exceptions::NoNode => e
       end
 
       def start
         return if @started
         @started = true
+        @waiting_for_next_round = false
         @heartbeat.start
         create_if_not_exists(get_absolute_path([@namespace]))
         create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
         @leader_path = get_relative_path(@prefix, "current_leader")
+        set_leader_subscription
         watch_leader
-        vote!
-        unless check_results
+        become_a_candidate
+        run_election
+        unless i_the_leader? 
           find_current_leader
         end
         @heartbeat.join
       end
 
-      def vote!
-        @path = @zk.create(get_relative_path(@prefix, "_vote_"), :data => @data, :mode => :ephemeral_sequential)
+      def become_a_candidate
+        @path = @zk.create(get_relative_path(@prefix, "_candidate_"), :data => @data, :mode => :ephemeral_sequential)
       end
 
       def stop
@@ -159,18 +169,16 @@ module ZkRecipes
       def election_lost
         @app_event_mutex.synchronize do
           @handler.election_lost!
-          wait_for_next_election 
         end
       end
 
-      def check_results
+      def run_election 
         @candidates = current_candidates 
         if i_the_leader?
           election_won
-          true
         else
           election_lost
-          false
+          wait_for_next_round
         end
       end
     end
