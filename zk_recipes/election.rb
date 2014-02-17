@@ -30,7 +30,7 @@ module ZkRecipes
       end
 
       def current_candidates
-        @zk.children(@prefix, :watch => false).grep(/^_vote_/).sort
+        @zk.children(@prefix, :watch => false).grep(/^_candidate_/).sort
       end
 
       def clear_parent_subscription
@@ -61,11 +61,11 @@ module ZkRecipes
       end
 
       def my_index
-        @myIdx ||= @candidates.index(File.basename(@path))
+        @candidates.index(File.basename(@path))
       end
 
       def i_the_leader?
-        my_index == 0 || !waiting_for_next_round
+        my_index == 0 || @all_parents_dead
       end
 
       def parent_path
@@ -79,15 +79,14 @@ module ZkRecipes
 
       def handle_parent_event(event)
         if event.node_deleted?
-          @waiting_for_next_round = false
-          check_results
+          run_election
         end
       end
 
       def handle_leader_event(event)
         if event.node_created?
           data = @zk.get(event.path)[0]
-          leader_ready(data) if @waiting_for_next_round
+          handle_leader_ready(data) if !i_the_leader?
           @zk.stat(@leader_path, :watch => true)
         end
       rescue ZK::Exceptions::NoNode => e
@@ -104,20 +103,22 @@ module ZkRecipes
           clear_parent_suscription
           false
         else
-          @waiting_for_next_round = true
+          p "watch succeeded for path: #{parent_path}"
           true
         end
       end
 
       def wait_for_next_round
         clear_parent_subscription
-        @candidates[0, my_index].reverse.each do |parent_path|
-          return if attempt_watch_parent(parent_path)
+        @candidates[0, my_index].reverse.each do |path|
+          p "ppath is: #{get_relative_path(@prefix, path)}"
+          return if attempt_watch_parent(get_relative_path(@prefix, path))
         end
+        @all_parents_dead = true
         election_won
       end
 
-      def leader_ready(data)
+      def handle_leader_ready(data)
         @app_event_mutex.synchronize do
           @handler.leader_ready!(data)
         end
@@ -126,7 +127,7 @@ module ZkRecipes
       def find_current_leader
         if @zk.exists?(@leader_path)
           data = @zk.get(@leader_path)
-          leader_ready(data[0])
+          handle_leader_ready(data[0])
         end
       rescue ZK::Exceptions::NoNode => e
       end
