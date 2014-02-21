@@ -1,33 +1,18 @@
 module ZkRecipes
-  module Election
+  module Election 
     class ElectionCandidate
       def initialize(zk, app_name, data, election_ns, handler)
         @zk                 = zk
-        @namespace          = app_name
-        @election_ns        = election_ns
         @handler            = handler
         @data               = data
-        @prefix             = get_absolute_path([@namespace, @election_ns])
         @started            = false
         @app_event_mutex    = Mutex.new 
-      end
-
-      def get_absolute_path(crumbs)
-        File.join([""] + crumbs)
-      end
-
-      def get_relative_path(prefix, suffix)
-        File.join([prefix, suffix])
-      end
-
-      def create_if_not_exists(path)
-        unless @zk.exists?(path)
-          @zk.create(path)
-        end
+        @leader_path        = 'current_leader'
+        @candidate_prefix   = '_candidate_'
       end
 
       def current_candidates
-        @zk.children(@prefix, :watch => false).grep(/^_candidate_/).sort
+        @zk.children(@prefix, :watch => false).grep(/^#{@candidate_prefix}/).sort
       end
 
       def clear_parent_subscription
@@ -131,9 +116,6 @@ module ZkRecipes
         return if @started
         @started = true
         @waiting_for_next_round = false
-        create_if_not_exists(get_absolute_path([@namespace]))
-        create_if_not_exists(get_absolute_path([@namespace, @election_ns]))
-        @leader_path = get_relative_path(@prefix, "current_leader")
         set_leader_subscription
         watch_leader
         become_a_candidate
@@ -144,7 +126,7 @@ module ZkRecipes
       end
 
       def become_a_candidate
-        @path = @zk.create(get_relative_path(@prefix, "_candidate_"), :data => @data, :mode => :ephemeral_sequential)
+        @path = @zk.create(get_relative_path(@prefix, @candidate_prefix), :data => @data, :mode => :ephemeral_sequential)
       end
 
       def stop
