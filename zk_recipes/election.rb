@@ -1,18 +1,26 @@
-module ZkRecipes
-  module Election 
-    class ElectionCandidate
-      def initialize(zk, app_name, data, election_ns, handler)
-        @zk                 = zk
-        @handler            = handler
-        @data               = data
-        @started            = false
-        @app_event_mutex    = Mutex.new 
-        @leader_path        = 'current_leader'
-        @candidate_prefix   = '_candidate_'
+module ZkRecipes 
+  module Election
+    class Candidate
+      inclide MonitorMixin
+
+      def initialize(zk, identity, data, leader_path, handler, notifier)
+        @zk               = zk
+        @handler          = handler
+        @identity         = identity
+        @data             = data
+        @app_event_mutex  = Mutex.new 
+        @leader_path      = '/' + leader_path
+        @candidate_prefix = '_candidate_'
+        @notifier         = notifier
+        mon_initialize
+      end
+
+      def log(msg)
+        $stderr.puts("candidate[#{::Process.pid}] | #{msg}")
       end
 
       def current_candidates
-        @zk.children(@prefix, :watch => false).grep(/^#{@candidate_prefix}/).sort
+        @zk.children("/", :watch => false).grep(/^#{@candidate_prefix}/).sort
       end
 
       def clear_parent_subscription
@@ -21,19 +29,18 @@ module ZkRecipes
         end
       end
 
-      def set_parent_subscription
+      def set_parent_subscription(parent_path)
         clear_parent_subscription
         @parent_subscription = @zk.register(parent_path) do |event|
           handle_parent_event(event)
         end
       end
 
-      def set_leader_subscription
-        clear_leader_subscription
+      def subscribe_to_leader
         @leader_subscription = @zk.register(@leader_path) do |event|
           handle_leader_event(event)
-          watch_leader
         end
+        watch_leader
       end
 
       def clear_leader_subscription
@@ -50,11 +57,6 @@ module ZkRecipes
         my_index == 0 || @all_parents_dead
       end
 
-      def parent_path
-        idx = @candidates.index(File.basename(@path))
-        idx == 0 ? nil : get_relative_path(@prefix, @candidates[idx - 1])
-      end
-
       def leader_ready 
         @zk.create(@leader_path, :data => @data, :mode => :ephemeral)
       end
@@ -66,42 +68,49 @@ module ZkRecipes
       end
 
       def handle_leader_event(event)
+        log("in handle leader event")
         if event.node_created?
+          log("node created callback")
           data = @zk.get(event.path)[0]
+          log("node created callback get done")
           handle_leader_ready(data) if !i_the_leader?
-          @zk.stat(@leader_path, :watch => true)
         end
       rescue ZK::Exceptions::NoNode => e
+      ensure
+        watch_leader
       end
 
       def watch_leader
+        log("trying to watch leader")
         @zk.stat(@leader_path, :watch => true)
+        log("done watching leader")
       end
 
       def attempt_watch_parent(parent_path)
         success = false
-        set_parent_subscription
-        if !@zk.exists?(parent_path, :watch => true)
-          clear_parent_suscription
-          false
-        else
-          true
-        end
+        set_parent_subscription(parent_path)
+        @zk.exists?(parent_path, :watch => true)
       end
 
       def wait_for_next_round
-        clear_parent_subscription
         @candidates[0, my_index].reverse.each do |path|
-          return if attempt_watch_parent(get_relative_path(@prefix, path))
+          if attempt_watch_parent("/" + path)
+            log("setting the parent watch on path: /#{path}")
+            return
+          end
         end
+        clear_parent_subscription
         @all_parents_dead = true
         election_won
       end
 
       def handle_leader_ready(data)
-        @app_event_mutex.synchronize do
-          @handler.leader_ready!(data)
+        log("attempting to call leader ready")
+        synchronize do
+          log("calling leader ready HASDIUBHASDTYJVUYBEXRCTYVURFTYGU")
+          @handler.leader_ready(data)
         end
+        log("HANDLE LREADER READU IS FUCKING DONE")
       end
 
       def find_current_leader
@@ -112,46 +121,71 @@ module ZkRecipes
       rescue ZK::Exceptions::NoNode => e
       end
 
+      def listen_on_connection
+        @zk.on_state_change do |e|
+          if e.connecting?
+            log("zookeeper_client_connecting")
+          elsif e.associating?
+            log("zookeeper_client_associating")
+          elsif e.connected?
+            log("zookeeper_client_connected")
+          elsif e.auth_failed?
+            log("zookeeper_client_auth_failed")
+          elsif e.expired_session?
+            log("zookeeper_client_expired_session")
+          else
+            log("zookeeper_state_change")
+          end
+        end
+      end
+
       def start
-        return if @started
-        @started = true
-        @waiting_for_next_round = false
-        set_leader_subscription
-        watch_leader
+        log("candidate started with identity #{@identity}")
+        listen_on_connection
+        subscribe_to_leader
         become_a_candidate
         run_election
         unless i_the_leader? 
           find_current_leader
         end
+        begin
+          sleep
+        rescue Interrupt
+        end
+      end
+
+      def candidate_prefix_path
+        "/" + @candidate_prefix
       end
 
       def become_a_candidate
-        @path = @zk.create(get_relative_path(@prefix, @candidate_prefix), :data => @data, :mode => :ephemeral_sequential)
-      end
-
-      def stop
-        return unless @started
+        @path = @zk.create(candidate_prefix_path, :data => @data, :mode => :ephemeral_sequential)
       end
 
       def election_won
-        @app_event_mutex.synchronize do
+        log("election won trying for the mutex")
+        synchronize do
+          log("election won got the mutex")
           clear_leader_subscription
-          @handler.election_won!
+          log("calling election won now on the handler")
+          @handler.election_won
           leader_ready
         end
       end
 
       def election_lost
-        @app_event_mutex.synchronize do
-          @handler.election_lost!
+        synchronize do
+          @handler.election_lost
         end
       end
 
       def run_election 
         @candidates = current_candidates 
         if i_the_leader?
+          log("I WON!")
           election_won
         else
+          log("I LOST!")
           election_lost
           wait_for_next_round
         end
