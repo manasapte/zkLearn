@@ -4,36 +4,34 @@ module ZkRecipes
       include MonitorMixin
       attr_reader :name, :parent, :data, :children
       private_class_method :new
-      attr_accessor :on_change, :on_children, :on_delete
+      attr_accessor :event_handler
 
       def initialize(zk, parent, name)
         @zk        = zk
         @parent    = parent
         @name      = name
         @children  = {}
-        @created   = false
-        @deleted   = false
         mon_initialize
       end
 
-      def self.create_or_get(zk, parent, name, data = nil)
+      def self.watch(zk, parent, name, &handler)
         new(zk, parent, name).tap do |znode|
           znode.instance_exec(data) do |data|
+            event_handler = handler
             subscribe
-            if @zk.exists?(path, :watch => true)
-              raise 'node already exists' unless data.nil
-            else
-              data = '' if data.nil?
-              @zk.create(path, :data => data)
-            end
-            parent.add_child(self) unless root?
+            @zk.stat(path, :watch => true)
             @zk.children(path, :watch => true)
           end
         end
       end
 
-      def deleted?
-        @deleted
+      def create(data, mode)
+        @zk.create(path, :data => data, :mode => mode)
+        parent.add_child(self) unless root?
+      end
+
+      def exists?
+        @zk.exists?(path)
       end
 
       def root?
@@ -65,10 +63,7 @@ module ZkRecipes
       end
 
       def post_delete_hook
-        synchronize do
-          unsubscribe
-          @delete = true
-        end
+        unsubscribe
       end
 
       def sync_children(children)
@@ -89,8 +84,10 @@ module ZkRecipes
           @children.each(&:delete) 
           @zk.delete(path)
         end
-        post_delete_hook
       rescue ZK::Exceptions::NoNode
+        false
+      else
+        true
       end
 
       private
@@ -99,14 +96,12 @@ module ZkRecipes
         @event_handler = @zk.register(path) do |event|
           if event.node_deleted?
             post_delete_hook 
-            on_delete(event)
           elsif event.node_changed?
             # TODO: implement the hook
-            on_change(event)
           elsif event.node_child?
             sync_children(@zk.children(path, :watch => true))
-            on_children(event)
           end
+          event_handler(event)
         end
       end
 

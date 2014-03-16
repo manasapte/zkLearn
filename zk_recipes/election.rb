@@ -8,7 +8,6 @@ module ZkRecipes
         @handler          = handler
         @identity         = identity
         @data             = data
-        @app_event_mutex  = Mutex.new 
         @leader_path      = '/' + leader_path
         @candidate_prefix = '_candidate_'
         @notifier         = notifier
