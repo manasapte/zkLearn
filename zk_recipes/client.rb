@@ -1,11 +1,12 @@
 module ZkRecipes 
   class Client
     class Zookeeper
-      def initialize(zk, notifier)
-        @znodes   = {}
-        @zk       = zk
-        @notifier = notifier
-        @ready    = false
+      def initialize(zk, notifier, &expiration_handler=nil)
+        @znodes            = {}
+        @zk                = zk
+        @notifier          = notifier
+        @exiration_handler = expiration_handler
+        @ready             = false
       end
 
       def manage_connection
@@ -21,7 +22,7 @@ module ZkRecipes
           @notifier.zookeeper_client_auth_failed
         elsif e.expired_session?
           @notifier.zookeeper_client_expired_session
-
+          expiration_handler.call(e)
         else
           @notifier.zookeeper_state_change(e)
         end
