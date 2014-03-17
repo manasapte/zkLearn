@@ -55,14 +55,13 @@ module ZkRecipes
 
     class Znode
       include MonitorMixin
-      attr_reader :name, :parent, :data, :children, :children_handlers, :node_handlers
+      attr_reader :name, :parent, :data, :children_handlers, :node_handlers
       ROOT_PATH = "/"
 
       def initialize(zk, parent, name)
-        @zk        = zk
-        @parent    = parent
-        @name      = name
-        @children  = {}
+        @zk                = zk
+        @parent            = parent
+        @name              = name
         @children_handlers = []
         @node_handlers     = []
         @client_watch      = false
@@ -115,6 +114,10 @@ module ZkRecipes
 
       def data
         @zk.get(path, :watch => true)[0]
+      end
+
+      def children
+        @children || sync_children(@zk.children(path, :watch => true))
       end
 
       def path
