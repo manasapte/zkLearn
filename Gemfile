@@ -1,2 +1,2 @@
 source 'https://rubygems.org'
-gem 'zookeeper'
+gem 'zk', '~> 1.9.0'
